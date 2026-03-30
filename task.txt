@@ -1,30 +1,62 @@
-Resume Project Summary
+ 1. Investment Transaction Processing Pipeline (Primary — Python)                                                                                       
                                                                                                                                                          
-  Investment Transaction Processing & Lot Tracking System
-                                                                                                                                                         
-  Built event-driven data pipelines processing daily mutual fund transactions from multiple fund administrators. The system ingests heterogeneous file
-  formats, normalizes 120+ transaction type codes into a unified schema, and maintains investor holdings using FIFO lot-based cost tracking.             
+  Overview:                                                                                                                                              
+  Designed and built an event-driven data pipeline processing daily mutual fund transactions from Registrar and Transfer Agents (RTAs). The system       
+  handles complete transaction lifecycle — from file ingestion through lot tracking to capital gains computation — processing high-volume feeds with     
+  complex business rules specific to Indian mutual fund regulations, while maintaining an architecture adaptable to any jurisdiction's tax and compliance
+   requirements.                                                                                                                                         
                   
-  Key Contributions:
-  - Developed multi-format parsers (DBF, delimited text) to ingest transaction feeds from third-party fund administrators, normalizing vendor-specific
-  codes into standardized transaction types                                                                                                              
-  - Built in-memory FIFO lot matching engine with O(log n) sorted insertion — creates purchase lots on buys, depletes lots on sells, generates matched
-  lot records for realized gain/loss calculation                                                                                                         
-  - Implemented capital gains computation engine supporting jurisdiction-specific tax rules: cost-basis adjustments, inflation indexation, grandfathering
-   provisions, and holding period classification (short-term vs long-term)                                                                               
-  - Designed cross-batch deduplication using content hashing to ensure idempotent processing across overlapping data feeds
-  - Built corporate action matching (switches, reversals) to correctly pair related transactions                          
-  - Optimized database writes using batch operations and aggregation pipelines — reduced query volume by 95%
+  Data Ingestion & Normalization:
+  - Developed multi-format parsers for CAMS WBR2 (DBF with cp1252 encoding) and KFintech MFSD201 (pipe-delimited text, DBF) transaction feeds
+  - Built transaction normalizer mapping 120+ RTA-specific transaction codes into a unified taxonomy (PURCHASE, REDEMPTION, SWITCH, STP, DIVIDEND,       
+  TRANSFER, PLEDGE, BONUS, DEMAT)
+  - Implemented reversal/deletion handling with mode-based filtering (Normal, Modified, Reversal, Deletion) and rejection suffix pattern matching        
+                  
+  FIFO Lot Matching Engine:                                                                                                                              
+  - Built in-memory FIFO lot tracking engine using bisect for O(log n) sorted insertion — creates purchase lots on credits, depletes lots on debits using
+   First-In-First-Out matching                                                                                                                           
+  - Generates matched lot records capturing buy/sell linkage for realized gain/loss calculation
+  - Handles corporate actions: switch-in/switch-out pairing, reversal matching across batches, transfer-in/out processing
                                                                                                                                                          
-  Tech Stack: Python, Apache Airflow, Polars, MongoDB, Kafka, AWS S3
-                                                                                                                                                         
-  Domain: Fund administration operations, investment lot accounting, FIFO cost-basis tracking, capital gains tax compliance, multi-source data
-  reconciliation
+  Capital Gains Computation Engine:
+  - Implemented comprehensive capital gains engine supporting 6 tax regimes (TR1–TR6) spanning regulatory changes from 2004 to 2024                      
+  - Built grandfathering calculator for equity funds acquired before cutoff date — applies formula MIN(Sell, MAX(Buy, FMV)) using historical NAV as Fair
+  Market Value                                                                                                                                          
+  - Implemented cost inflation indexation using Cost Inflation Index (CII) tables for debt fund LTCG
+  - Added stamp duty calculator, transitional relief, and holding period classification (STCG vs LTCG based on fund category and holding duration)
+  - Fund category classification: Equity-oriented (>65%), Debt-oriented (<65%), Specified MF (<35%), Hybrid, Gold/FOF                                    
+   
+  Data Integrity & Performance:                                                                                                                          
+  - Designed cross-batch deduplication using content hashing (dedup_hash) to ensure idempotent processing across overlapping feeds
+  - Built switch/reversal matching algorithms using batch aggregation to pair related transactions
+  - Optimized MongoDB writes using batch operations ($in queries, bulk_write) and $setWindowFields for server-side running balance calculation — reduced
+  query volume by 95%
+  - Implemented parallel enrichment tasks for NAV history, scheme master, benchmarks, and demographics
+
+  Domain Expertise:
+  Deep understanding of Indian mutual fund operations — RTA transaction lifecycles, SEBI regulations, tax regimes (grandfathering, indexation, LTCG/STCG
+  classification), and fund categorization. Architecture designed with jurisdiction-agnostic tax rules engine (JSON-configurable) — adaptable to UCITS
+  (EU), SEC (US), or other regulatory frameworks.
+
+  Tech: Python, Apache Airflow (TaskFlow API), Polars, MongoDB (aggregation pipelines, $setWindowFields), Kafka, AWS S3, Decimal precision arithmetic
 
   ---
-  Shorter Version
-                 
-  ▎ Built event-driven ETL pipelines processing fund transactions from multiple administrators. Developed FIFO lot matching engine for cost-basis 
-  tracking and capital gains computation with configurable tax rules. Tech: Python, Airflow, Polars, MongoDB, Kafka.                                     
+  2. Wealth Management Microservices Platform (Contributor — Java)
+
+  Contributed bug fixes and enhancements across a distributed microservices platform comprising 9 services (customer-service, order-service,
+  holding-service, integration-service, masterdata-service, reporting-service, cas-service, audit-service, rm-service) and 3 Kafka change-stream
+  publishers. Worked with hexagonal architecture (ports/adapters pattern) and Spring Boot.
+
+  Database Migrations & Performance Optimization:
+  - Authored Liquibase migration changesets for MongoDB schema evolution — collection creation, index management, field transformations, and data
+  migrations                                                                                                                                     
+  - Designed compound indexes for batch query optimization achieving 100–1000x query speedup (e.g., reversal matching: 13 min → 5 sec; AUM
+  reconciliation: 5+ hours → 10 sec)
+  - Managed index lifecycle: creation, snake_case migrations, partial unique indexes, and cleanup of unused indexes                                      
    
-  ---                                                                                                                                          
+  CI/CD Pipeline (GoCD):                                                                                                                                 
+  - Worked with multi-stage GoCD pipelines: lint → test → security scan (Checkmarx SAST/SCA) → build → deploy
+  - Multi-environment promotion: build → dev → QA with artifact versioning and Helm dependency management
+  - Kubernetes deployments via Helm charts with environment-specific configurations
+
+  Tech: Java, Spring Boot, MongoDB, Liquibase, Kafka, GoCD, Helm, Kubernetes, Checkmarx (SAST/SCA), Bitbucket, Docker
