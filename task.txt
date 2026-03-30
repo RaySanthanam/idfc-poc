@@ -1,36 +1,30 @@
-1. Multiple/Single Dag: Since same worker pool executes both the dogs, single dag is preferable:
-    1. Retry is easy
-    2. Easy dependency management 
-    3. One pipeline
-    4. Scheduler performance will be better
+Resume Project Summary
+                                                                                                                                                         
+  Investment Transaction Processing & Lot Tracking System
+                                                                                                                                                         
+  Built event-driven data pipelines processing daily mutual fund transactions from multiple fund administrators. The system ingests heterogeneous file
+  formats, normalizes 120+ transaction type codes into a unified schema, and maintains investor holdings using FIFO lot-based cost tracking.             
+                  
+  Key Contributions:
+  - Developed multi-format parsers (DBF, delimited text) to ingest transaction feeds from third-party fund administrators, normalizing vendor-specific
+  codes into standardized transaction types                                                                                                              
+  - Built in-memory FIFO lot matching engine with O(log n) sorted insertion — creates purchase lots on buys, depletes lots on sells, generates matched
+  lot records for realized gain/loss calculation                                                                                                         
+  - Implemented capital gains computation engine supporting jurisdiction-specific tax rules: cost-basis adjustments, inflation indexation, grandfathering
+   provisions, and holding period classification (short-term vs long-term)                                                                               
+  - Designed cross-batch deduplication using content hashing to ensure idempotent processing across overlapping data feeds
+  - Built corporate action matching (switches, reversals) to correctly pair related transactions                          
+  - Optimized database writes using batch operations and aggregation pipelines — reduced query volume by 95%
+                                                                                                                                                         
+  Tech Stack: Python, Apache Airflow, Polars, MongoDB, Kafka, AWS S3
+                                                                                                                                                         
+  Domain: Fund administration operations, investment lot accounting, FIFO cost-basis tracking, capital gains tax compliance, multi-source data
+  reconciliation
 
-2. DBF vs Mongo/Hashmap:
-    1. It is recommended to normalise the fields from karvy and cms to single field names, to make parallel processing much faster.
-    2. Mongo will be used as a single source of truth.
-    3. It is okay to use hashmap as a temporary, per-task in-memory accelerator.
-
-Why in memory Hashmap without discarding is bad:
-	1. Airflow is built for:
-        * stateless tasks
-        * retrying from disk / DB
-        * horizontal scaling
-	2. A huge in-memory hashmap:
-        * dies with the task
-        * must be rebuilt on retry
-        * cannot be shared across workers
-        * cannot be checkpointed
-    3. Mongo gives: 
-        * cannot be checkpointed
-        * persistence
-        * resumability
-        * retry safety
-        * observability
-
-
-3. Polars vs Pandas: Polars are much better than pandas:
-Aspect	Polars	Pandas
-Speed	5-10x faster	Baseline
-Memory	More efficient	Higher usage
-DBF Support	Via pandas or dbfread	Native via simpledbf
-Learning Curve	Similar to Pandas	Well-known
-Parallel Processing	Built-in	Requires Dask
+  ---
+  Shorter Version
+                 
+  ▎ Built event-driven ETL pipelines processing fund transactions from multiple administrators. Developed FIFO lot matching engine for cost-basis 
+  tracking and capital gains computation with configurable tax rules. Tech: Python, Airflow, Polars, MongoDB, Kafka.                                     
+   
+  ---                                                                                                                                          
