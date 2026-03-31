@@ -1,0 +1,276 @@
+# =============================================================================
+# LOCAL DEVELOPMENT DOCKER COMPOSE
+# =============================================================================
+# This file is for LOCAL DEVELOPMENT ONLY. NOT for production!
+#
+# Local-only services included:
+# - Uses external MinIO (wealth-minio on port 9000) - replaces AWS S3
+# - Mongo Express (MongoDB UI on port 8081) - for debugging
+# - Local PostgreSQL (port 5432) - replaces RDS
+# - Local MongoDB (port 27017) - replaces DocumentDB
+#
+# Usage: docker-compose -f docker-compose.local.yml up -d
+#
+# Access:
+# - Airflow UI: http://localhost:9080 (admin/admin)
+# - MinIO Console: http://localhost:9001 (test/test1234)
+# - Mongo Express: http://localhost:8081 (admin/admin)
+# =============================================================================
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: infrastructure/Dockerfile.local
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__FERNET_KEY: ''
+    # Shared secret for internal API authentication between scheduler and API server
+    AIRFLOW__CORE__INTERNAL_API_SECRET_KEY: 'rta-reverse-feed-secret-key-2024'
+    # JWT secret for execution API authentication (must match between scheduler and apiserver)
+    AIRFLOW__API_AUTH__JWT_SECRET: 'rta-jwt-secret-key-2024'
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__DAG_PROCESSOR__MIN_FILE_PROCESS_INTERVAL: 10
+    # Internal API URL for task execution (Airflow 3 requirement)
+    AIRFLOW__CORE__INTERNAL_API_URL: http://airflow-apiserver:8080
+    # Execution API URL for LocalExecutor task communication
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # Increase timeouts for long-running tasks
+    AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: 30
+    AIRFLOW__CORE__KILLED_TASK_CLEANUP_TIME: 300
+    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: 120
+    # S3/MinIO configuration - must match MINIO_ROOT_USER/PASSWORD
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test1234
+    AWS_DEFAULT_REGION: us-east-1
+    # Use container network name for MinIO
+    S3_ENDPOINT_URL: http://minio:4566
+    # AUM Recon report bucket (reports saved directly to bucket root)
+    AUM_REPORT_S3_BUCKET: wealth-pulse-reverse-feeds-dev
+    # MongoDB configuration - local MongoDB
+    MONGO_URI: mongodb://mongodb:27017/holding_service?directConnection=true
+    MONGO_DB: holding_service
+    RTA_MONGO_DB: holding_service
+    # Disable SSL verification for local development (internal APIs)
+    DISABLE_SSL_VERIFY: "true"
+    # Skip moving files to processed folder (for testing - allows reprocessing same files)
+    RTA_SKIP_MOVE_TO_PROCESSED: "true"
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./data:/opt/airflow/data
+    - ./config:/opt/airflow/config
+    - ./common:/opt/airflow/common
+    - ./db_connection.py:/opt/airflow/db_connection.py
+    - ./loaders:/opt/airflow/loaders
+    - ./recon:/opt/airflow/recon
+    - ./calculators:/opt/airflow/calculators
+    - ./snapshots:/opt/airflow/snapshots
+    - ./migrations:/opt/airflow/migrations
+    - ./dags/holding/parsers:/opt/airflow/parsers
+    - ./sample:/opt/airflow/sample
+    - ./exports:/opt/airflow/exports
+    - ./tests:/opt/airflow/tests
+  depends_on:
+    &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+    minio:
+      condition: service_healthy
+    mongodb:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    ports:
+      - "5432:5432"
+
+  # MongoDB for local development
+  mongodb:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # MinIO for local S3 storage
+  minio:
+    image: minio/minio:latest
+    command: server /data --address ":4566" --console-address ":9001"
+    ports:
+      - "4566:4566"   # S3 API (same port as LocalStack for compatibility)
+      - "9001:9001"   # MinIO Console UI
+    environment:
+      MINIO_ROOT_USER: test
+      MINIO_ROOT_PASSWORD: test1234
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Mongo Express - MongoDB UI
+  mongo-express:
+    image: mongo-express:1.0.2
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: 'true'
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "9080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+
+    command: scheduler
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+    healthcheck:
+      test: [ "CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $$(hostname)" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Airflow initialization
+  airflow-init:
+    <<: *airflow-common
+    user: "50000:0"  # Use default airflow user for db migrations
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow fab-db migrate
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com || true
+        # Create AWS connection for MinIO
+        airflow connections delete aws_default 2>/dev/null || true
+        airflow connections add aws_default \
+          --conn-type aws \
+          --conn-extra '{"endpoint_url": "http://minio:4566", "region_name": "us-east-1"}' \
+          --conn-login test \
+          --conn-password test1234
+        # Create MongoDB connection for holding service
+        airflow connections delete mongo_holding_service 2>/dev/null || true
+        airflow connections add mongo_holding_service \
+          --conn-type mongo \
+          --conn-host mongodb \
+          --conn-port 27017 \
+          --conn-schema holding_service \
+          --conn-extra '{"directConnection": true}'
+        # Create MongoDB connection for order service (used by order matching)
+        airflow connections delete mongo_order_service 2>/dev/null || true
+        airflow connections add mongo_order_service \
+          --conn-type mongo \
+          --conn-host mongodb \
+          --conn-port 27017 \
+          --conn-schema order_service \
+          --conn-extra '{"directConnection": true}'
+        # Set Airflow variables for S3 paths
+        airflow variables set RTA_S3_BUCKET wealth-pulse-reverse-feeds-dev
+        airflow variables set CAMS_WBR2_PREFIX "cams/wbr2/"
+        airflow variables set CAMS_WBR2A_PREFIX "cams/wbr2a/"
+        airflow variables set KFIN_MFSD201_PREFIX "kfin/"
+        airflow variables set PROCESSED_PREFIX "processed/"
+        airflow variables set AWS_CONN_ID aws_default
+        echo "Airflow initialized with MinIO connection"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    environment:
+      MC_HOST_local: http://test:test1234@minio:4566
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        sleep 5
+        mc mb local/wealth-pulse-reverse-feeds-dev --ignore-existing
+        echo "Bucket created successfully"
+    depends_on:
+      minio:
+        condition: service_healthy
+
+volumes:
+  postgres-db-volume:
+  minio_data:
+  mongodb_data:
